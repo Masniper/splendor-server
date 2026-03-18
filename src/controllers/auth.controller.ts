@@ -195,3 +195,64 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       .json({ success: false, error: "Internal server error during login" });
   }
 };
+
+// 4. Register User
+export const registerUser = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, password, username } = req.body;
+
+    if (!email || !password) {
+      res.status(400).json({ error: 'Email and password are required' });
+      return;
+    }
+
+    // Check if email already exists
+    const existingEmail = await prisma.user.findUnique({ where: { email } });
+    if (existingEmail) {
+      res.status(400).json({ error: 'Email is already in use' });
+      return;
+    }
+
+    // Check if username is provided and already exists
+    if (username) {
+      const existingUsername = await prisma.user.findUnique({ where: { username } });
+      if (existingUsername) {
+        res.status(400).json({ error: 'Username is already taken' });
+        return;
+      }
+    }
+
+    // Hash the password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // Create the new user
+    const newUser = await prisma.user.create({
+      data: {
+        email,
+        password: hashedPassword,
+        username,
+        is_guest: false,
+      },
+    });
+
+    // Generate JWT token
+    const token = jwt.sign({ userId: newUser.id }, JWT_SECRET, { expiresIn: '7d' });
+
+    res.status(201).json({
+      message: 'User registered successfully',
+      token,
+      user: {
+        id: newUser.id,
+        username: newUser.username,
+        email: newUser.email,
+        is_guest: newUser.is_guest,
+        coins: newUser.coins,
+        mmr: newUser.mmr,
+      },
+    });
+  } catch (error) {
+    console.error('Register error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};

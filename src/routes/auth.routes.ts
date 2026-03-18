@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createGuestUser, upgradeAccount, login } from '../controllers/auth.controller';
+import { createGuestUser, upgradeAccount, login, registerUser } from '../controllers/auth.controller';
 import { verifyToken } from '../middlewares/auth.middleware';
 
 const router = Router();
@@ -93,5 +93,35 @@ router.post('/upgrade', verifyToken, upgradeAccount);
  *         description: Invalid credentials
  */
 router.post('/login', login);
+
+/**
+ * @swagger
+ * /api/auth/register:
+ *   post:
+ *     summary: Register a new user directly
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - password
+ *             properties:
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *               username:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: User registered successfully
+ *       400:
+ *         description: Validation error (e.g., email already in use)
+ */
+router.post('/register', registerUser);
 
 export default router;
