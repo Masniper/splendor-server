@@ -2,7 +2,7 @@ import swaggerJsdoc from 'swagger-jsdoc';
 
 const PORT = process.env.PORT || 5001;
 
-const swaggerOptions = {
+const swaggerOptions: swaggerJsdoc.Options = {
   definition: {
     openapi: '3.0.0',
     info: {
@@ -15,9 +15,20 @@ const swaggerOptions = {
         url: `http://localhost:${PORT}`,
       },
     ],
+    // Add Security Schemes for JWT
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'JWT',
+        },
+      },
+    },
+    // Apply security globally (optional, but good for testing)
+    security: [{ bearerAuth: [] }],
   },
-  // Path to the files containing Swagger annotations
-  apis: ['./src/routes/*.ts'], 
+  apis: ['./src/routes/*.ts', './src/server.ts'], 
 };
 
 export const swaggerDocs = swaggerJsdoc(swaggerOptions);
