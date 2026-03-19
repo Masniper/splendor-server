@@ -169,9 +169,18 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
     if (room.players.length >= 4) {
       return socket.emit("error", { message: "Room is full" });
     }
-    // if (room.players.some((p) => p.userId === userId)) {
-    //   return socket.emit("error", { message: "You are already in this room" });
-    // }
+
+    // Idempotency: if the same user joins twice (e.g., StrictMode/reconnect edge cases),
+    // update socketId instead of creating a duplicate player entry.
+    const existing = room.players.find((p) => p.userId === userId);
+    if (existing) {
+      existing.socketId = socket.id;
+      existing.username = username;
+      playerSessions.set(userId, roomId);
+      socket.join(roomId);
+      io.to(roomId).emit("room:updated", { room });
+      return;
+    }
 
     room.players.push({ userId, socketId: socket.id, username });
     playerSessions.set(userId, roomId);
