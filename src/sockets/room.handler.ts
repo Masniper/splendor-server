@@ -19,8 +19,8 @@ export interface Room {
 export const activeRooms = new Map<string, Room>();
 
 export function registerRoomHandlers(io: Server, socket: Socket) {
-  const userId = socket.data.user.id;
-  const username = socket.data.user.username;
+  const userId = socket.data.userId;
+  const username = socket.data.username;
 
   socket.on('room:create', () => {
     const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();

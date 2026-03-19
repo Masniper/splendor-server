@@ -1,3 +1,4 @@
+import dotenv from 'dotenv';
 import express from 'express';
 import http from 'http';
 import cors from 'cors';
@@ -6,7 +7,6 @@ import swaggerUi from 'swagger-ui-express';
 import { swaggerDocs } from './config/swagger';
 import authRoutes from './routes/auth.routes';
 import userRoutes from './routes/user.routes';
-import dotenv from 'dotenv';
 import { initializeSockets } from './sockets';
 
 dotenv.config();

@@ -10,7 +10,7 @@ import {
 import { GemColor } from '../game/models';
 
 export function registerGameHandlers(io: Server, socket: Socket) {
-  const userId = socket.data.user.id;
+  const userId = socket.data.userId;
 
   // Helper function to validate room and game state
   const getValidRoom = (roomId: string) => {
