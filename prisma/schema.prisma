@@ -15,16 +15,77 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum UserRole {
+  GUEST
+  USER
+}
+
+enum RoomStatus {
+  WAITING
+  PLAYING
+  FINISHED
+  CANCELLED
+}
+
+enum BetStatus {
+  PENDING
+  WON
+  LOST
+  REFUNDED
+}
+
 model User {
   id              String   @id @default(uuid())
   is_guest        Boolean  @default(false)
+  role            UserRole @default(GUEST)
   username        String?  @unique
   email           String?  @unique
   password        String?
   coins           Int      @default(0)
+  xp              Int      @default(0)
+  wins            Int      @default(0)
+  losses          Int      @default(0)
   mmr             Int      @default(1000)
   profile_picture String?
   bio             String?
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
+
+  roomsHosted Room[] @relation("RoomHost")
+  roomMembers Room[] @relation("RoomMembers")
+  bets        Bet[]
+}
+
+model Room {
+  id         String     @id @default(cuid())
+  name       String?
+  status     RoomStatus @default(WAITING)
+  hostId     String
+  host       User       @relation("RoomHost", fields: [hostId], references: [id], onDelete: Cascade)
+  members    User[]     @relation("RoomMembers")
+  bets       Bet[]
+  created_at DateTime   @default(now())
+  updated_at DateTime   @updatedAt
+
+  @@index([hostId])
+  @@index([status])
+}
+
+model Bet {
+  id         String    @id @default(cuid())
+  roomId     String
+  userId     String
+  amount     Int
+  status     BetStatus @default(PENDING)
+  payout     Int?
+  settledAt  DateTime?
+  created_at DateTime  @default(now())
+  updated_at DateTime  @updatedAt
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([roomId])
+  @@index([userId])
+  @@index([status])
 }
