@@ -1,74 +1,111 @@
 import { Server, Socket } from 'socket.io';
+import { GameState } from '../game/models';
+import { initializeGame } from '../game/setup';
+import { 
+  level1Cards, 
+  level2Cards, 
+  level3Cards, 
+  noblesData 
+} from '../game/data';
 
-// Simple in-memory storage for rooms
-export const rooms: Record<string, any> = {};
+export interface Room {
+  id: string;
+  hostId: string;
+  players: { userId: string; socketId: string; username: string }[];
+  gameState: GameState | null;
+  status: 'waiting' | 'playing' | 'finished';
+}
 
-// Generate a 6-character random room code
-const generateRoomCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
+export const activeRooms = new Map<string, Room>();
 
-export const registerRoomHandlers = (io: Server, socket: Socket) => {
-  const userId = socket.data.userId;
+export function registerRoomHandlers(io: Server, socket: Socket) {
+  const userId = socket.data.user.id;
+  const username = socket.data.user.username;
 
-  // 1. Create a new room
-  socket.on('create_room', (callback) => {
-    const roomId = generateRoomCode();
+  socket.on('room:create', () => {
+    const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
     
-    rooms[roomId] = {
+    const newRoom: Room = {
       id: roomId,
-      players: [{ userId, socketId: socket.id, isReady: false }],
-      status: 'waiting', // waiting, playing, finished
+      hostId: userId,
+      players: [{ userId, socketId: socket.id, username }],
+      gameState: null,
+      status: 'waiting'
     };
 
+    activeRooms.set(roomId, newRoom);
     socket.join(roomId);
-    console.log(`User ${userId} created and joined room ${roomId}`);
 
-    if (callback) callback({ success: true, roomId, room: rooms[roomId] });
+    socket.emit('room:created', { roomId, room: newRoom });
+    console.log(`[Room] User ${username} created room ${roomId}`);
   });
 
-  // 2. Join an existing room
-  socket.on('join_room', ({ roomId }, callback) => {
-    const room = rooms[roomId];
+  socket.on('room:join', (roomId: string) => {
+    const room = activeRooms.get(roomId);
 
     if (!room) {
-      if (callback) callback({ success: false, error: 'Room not found' });
-      return;
+      return socket.emit('error', { message: 'Room not found' });
+    }
+    if (room.status !== 'waiting') {
+      return socket.emit('error', { message: 'Game already started' });
+    }
+    if (room.players.length >= 4) {
+      return socket.emit('error', { message: 'Room is full' });
+    }
+    if (room.players.some(p => p.userId === userId)) {
+      return socket.emit('error', { message: 'You are already in this room' });
     }
 
-    if (room.players.length >= 4) { // Assuming max capacity is 4
-      if (callback) callback({ success: false, error: 'Room is full' });
-      return;
-    }
+    room.players.push({ userId, socketId: socket.id, username });
+    socket.join(roomId);
 
-    const existingPlayer = room.players.find((p: any) => p.userId === userId);
-    if (!existingPlayer) {
-      room.players.push({ userId, socketId: socket.id, isReady: false });
-      socket.join(roomId);
-    }
-
-    console.log(`User ${userId} joined room ${roomId}`);
-
-    // Notify other players in the room
-    socket.to(roomId).emit('player_joined', { room });
-
-    if (callback) callback({ success: true, roomId, room });
+    io.to(roomId).emit('room:updated', { room });
+    console.log(`[Room] User ${username} joined room ${roomId}`);
   });
 
-  // 3. Handle disconnect
+  socket.on('room:start', (roomId: string) => {
+    const room = activeRooms.get(roomId);
+
+    if (!room) return socket.emit('error', { message: 'Room not found' });
+    if (room.hostId !== userId) return socket.emit('error', { message: 'Only host can start the game' });
+    if (room.players.length < 2) return socket.emit('error', { message: 'Need at least 2 players to start' });
+
+    const playersInfo = room.players.map(p => ({
+      id: p.userId,
+      name: p.username
+    }));
+
+    const newGameState = initializeGame(
+      roomId,
+      playersInfo,
+      level1Cards,
+      level2Cards,
+      level3Cards,
+      noblesData
+    );
+
+    room.gameState = newGameState;
+    room.status = 'playing';
+
+    io.to(roomId).emit('game:started', { gameState: newGameState });
+    console.log(`[Game] Game started in room ${roomId}`);
+  });
+
   socket.on('disconnect', () => {
-    for (const roomId in rooms) {
-      const room = rooms[roomId];
-      const playerIndex = room.players.findIndex((p: any) => p.socketId === socket.id);
-      
+    activeRooms.forEach((room, roomId) => {
+      const playerIndex = room.players.findIndex(p => p.socketId === socket.id);
       if (playerIndex !== -1) {
         room.players.splice(playerIndex, 1);
         
         if (room.players.length === 0) {
-          delete rooms[roomId]; // Delete empty rooms
+          activeRooms.delete(roomId);
         } else {
-          // Notify others that this player left
-          io.to(roomId).emit('player_left', { userId, room });
+          if (room.hostId === userId) {
+            room.hostId = room.players[0].userId;
+          }
+          io.to(roomId).emit('room:updated', { room });
         }
       }
-    }
+    });
   });
-};
+}
