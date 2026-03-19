@@ -1,6 +1,15 @@
-import { Router } from 'express';
-import { getMe, updateProfile } from '../controllers/user.controller';
-import { verifyToken } from '../middlewares/auth.middleware';
+import { Router } from "express";
+import {
+  getMe,
+  getPublicProfile,
+  updateProfile,
+} from "../controllers/user.controller";
+import { verifyToken } from "../middlewares/auth.middleware";
+import { validate } from "../middlewares/validate.middleware";
+import {
+  updateProfileBodySchema,
+  userIdParamSchema,
+} from "../validations/user.validation";
 
 const router = Router();
 
@@ -20,7 +29,7 @@ const router = Router();
  *       404:
  *         description: User not found
  */
-router.get('/me', verifyToken, getMe);
+router.get("/me", verifyToken, getMe);
 
 /**
  * @swagger
@@ -51,6 +60,35 @@ router.get('/me', verifyToken, getMe);
  *       401:
  *         description: Unauthorized
  */
-router.put('/profile', verifyToken, updateProfile);
+router.put(
+  "/profile",
+  verifyToken,
+  validate({ body: updateProfileBodySchema }),
+  updateProfile,
+);
+
+/**
+ * @swagger
+ * /api/user/{userId}/public:
+ *   get:
+ *     summary: Get public profile by user id
+ *     tags: [User]
+ *     parameters:
+ *       - in: path
+ *         name: userId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Public profile data
+ *       404:
+ *         description: User not found
+ */
+router.get(
+  "/:userId/public",
+  validate({ params: userIdParamSchema }),
+  getPublicProfile,
+);
 
 export default router;

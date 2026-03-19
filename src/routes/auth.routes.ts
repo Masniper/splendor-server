@@ -1,6 +1,17 @@
-import { Router } from 'express';
-import { createGuestUser, upgradeAccount, login, registerUser } from '../controllers/auth.controller';
-import { verifyToken } from '../middlewares/auth.middleware';
+import { Router } from "express";
+import {
+  createGuestUser,
+  login,
+  registerUser,
+  upgradeAccount,
+} from "../controllers/auth.controller";
+import { verifyToken } from "../middlewares/auth.middleware";
+import { validate } from "../middlewares/validate.middleware";
+import {
+  loginBodySchema,
+  registerBodySchema,
+  upgradeAccountBodySchema,
+} from "../validations/auth.validation";
 
 const router = Router();
 
@@ -27,7 +38,7 @@ const router = Router();
  *                 user:
  *                   type: object
  */
-router.post('/guest', createGuestUser);
+router.post("/guest", createGuestUser);
 
 /**
  * @swagger
@@ -62,7 +73,12 @@ router.post('/guest', createGuestUser);
  *       401:
  *         description: Unauthorized (Token missing or invalid)
  */
-router.post('/upgrade', verifyToken, upgradeAccount);
+router.post(
+  "/upgrade",
+  verifyToken,
+  validate({ body: upgradeAccountBodySchema }),
+  upgradeAccount,
+);
 
 /**
  * @swagger
@@ -92,7 +108,7 @@ router.post('/upgrade', verifyToken, upgradeAccount);
  *       401:
  *         description: Invalid credentials
  */
-router.post('/login', login);
+router.post("/login", validate({ body: loginBodySchema }), login);
 
 /**
  * @swagger
@@ -122,6 +138,6 @@ router.post('/login', login);
  *       400:
  *         description: Validation error (e.g., email already in use)
  */
-router.post('/register', registerUser);
+router.post("/register", validate({ body: registerBodySchema }), registerUser);
 
 export default router;
