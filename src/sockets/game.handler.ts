@@ -4,6 +4,7 @@ import {
   takeTokens, 
   purchaseCard, 
   reserveCardFromBoard, 
+  reserveCardFromDeck,
   discardTokens, 
   chooseNoble 
 } from '../game/actions';
@@ -56,6 +57,17 @@ export function registerGameHandlers(io: Server, socket: Socket) {
     try {
       const room = getValidRoom(roomId);
       room.gameState = reserveCardFromBoard(room.gameState!, cardId);
+      io.to(roomId).emit('game:updated', { gameState: room.gameState });
+    } catch (error: any) {
+      socket.emit('game:error', { message: error.message });
+    }
+  });
+
+  // 3.5 Reserve Card From Deck (face-down)
+  socket.on('game:reserveFromDeck', (roomId: string, level: 1 | 2 | 3) => {
+    try {
+      const room = getValidRoom(roomId);
+      room.gameState = reserveCardFromDeck(room.gameState!, level);
       io.to(roomId).emit('game:updated', { gameState: room.gameState });
     } catch (error: any) {
       socket.emit('game:error', { message: error.message });
