@@ -104,7 +104,43 @@ const endOfMainAction = (state: GameState): GameState => {
   return checkNoblesAndEndTurn(state);
 };
 
-export const takeTokens = (state: GameState, tokens: GemColor[]): GameState => {
+const applyDiscardTokens = (
+  state: GameState,
+  player: Player,
+  discardTokens: GemColor[],
+) => {
+  if (!discardTokens || discardTokens.length === 0) return;
+
+  const currentTotal = getTotalTokens(player);
+  if (currentTotal - discardTokens.length !== 10) {
+    throw new GameError(
+      `You must discard exactly ${currentTotal - 10} tokens.`,
+    );
+  }
+
+  const counts: Partial<Record<GemColor, number>> = {};
+  for (const t of discardTokens) {
+    counts[t] = (counts[t] || 0) + 1;
+  }
+
+  for (const [colorStr, count] of Object.entries(counts)) {
+    const color = colorStr as GemColor;
+    if (player.ownedTokens[color] < count) {
+      throw new GameError(`You do not have enough ${color} tokens to discard.`);
+    }
+  }
+
+  for (const color of discardTokens) {
+    player.ownedTokens[color]--;
+    state.bank[color]++;
+  }
+};
+
+export const takeTokens = (
+  state: GameState,
+  tokens: GemColor[],
+  discardTokens: GemColor[] = [],
+): GameState => {
   if (state.turnPhase !== "MainAction")
     throw new GameError("Not in main action phase.");
   if (tokens.length === 0) throw new GameError("Must select tokens to take.");
@@ -143,6 +179,15 @@ export const takeTokens = (state: GameState, tokens: GemColor[]): GameState => {
   for (const color of tokens) {
     newState.bank[color]--;
     player.ownedTokens[color]++;
+  }
+
+  const totalAfter = getTotalTokens(player);
+  if (totalAfter > 10) {
+    if (!discardTokens || discardTokens.length === 0) {
+      newState.turnPhase = "DiscardTokens";
+      return newState;
+    }
+    applyDiscardTokens(newState, player, discardTokens);
   }
 
   return endOfMainAction(newState);
@@ -293,6 +338,7 @@ export const purchaseCard = (state: GameState, cardId: string): GameState => {
 export const reserveCardFromBoard = (
   state: GameState,
   cardId: string,
+  discardTokens: GemColor[] = [],
 ): GameState => {
   if (state.turnPhase !== "MainAction")
     throw new GameError("Not in main action phase.");
@@ -336,12 +382,22 @@ export const reserveCardFromBoard = (
     }
   }
 
+  const totalAfter = getTotalTokens(player);
+  if (totalAfter > 10) {
+    if (!discardTokens || discardTokens.length === 0) {
+      newState.turnPhase = "DiscardTokens";
+      return newState;
+    }
+    applyDiscardTokens(newState, player, discardTokens);
+  }
+
   return endOfMainAction(newState);
 };
 
 export const reserveCardFromDeck = (
   state: GameState,
   level: 1 | 2 | 3,
+  discardTokens: GemColor[] = [],
 ): GameState => {
   if (state.turnPhase !== "MainAction")
     throw new GameError("Not in main action phase.");
@@ -363,6 +419,15 @@ export const reserveCardFromDeck = (
   if (newState.bank[GemColor.Gold] > 0) {
     newState.bank[GemColor.Gold]--;
     player.ownedTokens[GemColor.Gold]++;
+  }
+
+  const totalAfter = getTotalTokens(player);
+  if (totalAfter > 10) {
+    if (!discardTokens || discardTokens.length === 0) {
+      newState.turnPhase = "DiscardTokens";
+      return newState;
+    }
+    applyDiscardTokens(newState, player, discardTokens);
   }
 
   return endOfMainAction(newState);
