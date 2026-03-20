@@ -13,8 +13,13 @@ export const createRoom = async (
       res.status(401).json({ success: false, error: "Unauthorized" });
       return;
     }
-    const room = await createRoomForUser(req.userId, req.body.name);
-    res.status(201).json({ success: true, room });
+    const room = await createRoomForUser({
+      hostId: req.userId,
+      name: req.body.name,
+      isPublic: req.body.isPublic,
+      betAmount: req.body.betAmount,
+    });
+    res.status(201).json({ success: true, data: room });
   } catch (error) {
     next(error);
   }
@@ -32,7 +37,7 @@ export const settleRoom = async (
     res.status(200).json({
       success: true,
       message: "Room bets settled successfully.",
-      result,
+      data: result,
     });
   } catch (error) {
     next(error);
