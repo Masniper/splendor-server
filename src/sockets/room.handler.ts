@@ -7,6 +7,21 @@ import {
   level3Cards,
   noblesData,
 } from "../game/data";
+import type { PublicRoomListItem } from "../types/room";
+import { parseBetAmountForSocket } from "../utils/roomInput";
+import {
+  addMemberToRoom,
+  createRoomForUser,
+  deleteRoom,
+  removeMemberFromRoom,
+  updateRoomHost,
+} from "../services/room.service";
+import {
+  assertUserHasCoins,
+  initializeRoomBets,
+  settleRoomBets,
+} from "../services/bet.service";
+import { prisma } from "../services/prisma.service";
 
 export interface Room {
   id: string;
@@ -19,6 +34,9 @@ export interface Room {
   rematchEnabled: boolean;
   isPublic: boolean;
   waitingForReconnection: boolean;
+  /** Display name — mirrors persisted Room.name */
+  name: string;
+  betAmount: number;
   disconnectTimeouts: Map<string, NodeJS.Timeout>;
   disconnectDeadlines: Record<string, number>;
 }
@@ -43,7 +61,8 @@ function cleanupPlayerSession(userId: string, roomId: string) {
 
 export function registerRoomHandlers(io: Server, socket: Socket) {
   const userId = socket.data.userId;
-  const username = socket.data.username;
+  /** Always read current value (e.g. after auth:refresh updates socket.data). */
+  const getUsername = () => (socket.data.username as string) || "";
 
   const emitDisconnectStatus = (room: Room) => {
     const pending = room.players
@@ -75,12 +94,59 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
 
   const endGameForRoom = (room: Room, reason: string) => {
     room.status = "finished";
-    room.gameState = null;
+    // Keep the latest gameState so the frontend can display a GameOver modal.
     room.rematchEnabled = false;
     room.rematchRequests = [];
     io.to(room.id).emit("game:error", { message: reason });
     io.to(room.id).emit("game:ended");
     broadcastRematchUpdate(room, reason);
+  };
+
+  const removePlayerFromRoomSilent = (
+    room: Room,
+    targetUserId: string,
+    roomId: string,
+  ) => {
+    const playerIndex = room.players.findIndex(
+      (p) => p.userId === targetUserId,
+    );
+    if (playerIndex === -1) return false;
+
+    const player = room.players[playerIndex];
+    room.players.splice(playerIndex, 1);
+    delete room.disconnectDeadlines[targetUserId];
+    cleanupPlayerSession(targetUserId, roomId);
+
+    if (room.players.length === 0) {
+      activeRooms.delete(roomId);
+      room.disconnectTimeouts.delete(targetUserId);
+      return true;
+    }
+
+    void removeMemberFromRoom(roomId, targetUserId).catch((err) =>
+      console.error("[Room] removeMemberFromRoom failed:", err),
+    );
+
+    // Host migration
+    if (room.hostId === targetUserId && room.players.length > 0) {
+      room.hostId = room.players[0].userId;
+      void updateRoomHost(roomId, room.hostId).catch((err) =>
+        console.error("[Room] updateRoomHost failed:", err),
+      );
+    }
+
+    // If the original creator leaves, disable rematch (matches prior behavior)
+    if (room.originalHostId === targetUserId) {
+      room.rematchEnabled = false;
+      broadcastRematchUpdate(room, "Host left. Rematch disabled.");
+    }
+
+    // If game hasn't started, keep memory consistent (no GameOver emitted here)
+    if (room.status !== "playing") {
+      io.to(roomId).emit("room:updated", { room });
+    }
+
+    return false;
   };
 
   const removePlayerFromRoom = (
@@ -103,10 +169,17 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
       return true;
     }
 
+    void removeMemberFromRoom(roomId, userId).catch((err) =>
+      console.error("[Room] removeMemberFromRoom failed:", err),
+    );
+
     // Host migration (transfers host to the first remaining player)
     if (room.hostId === userId) {
       room.hostId = room.players[0].userId;
       console.log(`[Room] Host migrated to ${room.players[0].username} in room ${roomId}`);
+      void updateRoomHost(roomId, room.hostId).catch((err) =>
+        console.error("[Room] updateRoomHost failed:", err),
+      );
     }
 
     // If the original creator leaves, disable the rematch feature
@@ -131,33 +204,67 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
     return false;
   };
 
-  socket.on("room:create", (isPublic: boolean = false) => {
-    const roomId = Math.random().toString(36).substring(2, 8).toUpperCase();
+  socket.on(
+    "room:create",
+    async (
+      data: {
+        isPublic?: boolean;
+        roomName?: string;
+        betAmount?: number;
+      } = {},
+    ) => {
+      const isPublic = data.isPublic ?? true;
+      const customName = data.roomName?.trim() || undefined;
+      const parsedBet = parseBetAmountForSocket(data.betAmount);
+      if (!parsedBet.ok) {
+        return socket.emit("error", { message: parsedBet.message });
+      }
+      const betAmount = parsedBet.value;
 
-    const newRoom: Room = {
-      id: roomId,
-      hostId: userId,
-      originalHostId: userId,
-      players: [{ userId, socketId: socket.id, username }],
-      gameState: null,
-      status: "waiting",
-      rematchRequests: [],
-      rematchEnabled: true,
-      isPublic,
-      waitingForReconnection: false,
-      disconnectTimeouts: new Map(),
-      disconnectDeadlines: {},
-    };
+      try {
+        const row = await createRoomForUser({
+          hostId: userId,
+          name: customName,
+          isPublic,
+          betAmount,
+        });
 
-    activeRooms.set(roomId, newRoom);
-    playerSessions.set(userId, roomId);
-    socket.join(roomId);
+        const roomId = row.id;
+        const displayName = row.name?.trim() || roomId;
 
-    socket.emit("room:created", { roomId, room: newRoom });
-    console.log(`[Room] User ${username} created room ${roomId}`);
-  });
+        const newRoom: Room = {
+          id: roomId,
+          hostId: userId,
+          originalHostId: userId,
+          players: [{ userId, socketId: socket.id, username: getUsername() }],
+          gameState: null,
+          status: "waiting",
+          rematchRequests: [],
+          rematchEnabled: true,
+          isPublic: row.isPublic,
+          waitingForReconnection: false,
+          name: displayName,
+          betAmount: row.betAmount,
+          disconnectTimeouts: new Map(),
+          disconnectDeadlines: {},
+        };
 
-  socket.on("room:join", (roomId: string) => {
+        activeRooms.set(roomId, newRoom);
+        playerSessions.set(userId, roomId);
+        socket.join(roomId);
+
+        socket.emit("room:created", { roomId, room: newRoom });
+        console.log(`[Room] User ${getUsername()} created room ${roomId}`);
+      } catch (e: unknown) {
+        const message =
+          e instanceof Error ? e.message : "Failed to create room";
+        console.error("[Room] createRoomForUser failed:", message);
+        socket.emit("error", { message });
+      }
+    },
+  );
+
+  socket.on("room:join", async (roomId: string) => {
     const room = activeRooms.get(roomId);
 
     if (!room) {
@@ -166,33 +273,48 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
     if (room.status !== "waiting") {
       return socket.emit("error", { message: "Game already started" });
     }
-    if (room.players.length >= 4) {
-      return socket.emit("error", { message: "Room is full" });
-    }
-
-    // Idempotency: if the same user joins twice (e.g., StrictMode/reconnect edge cases),
-    // update socketId instead of creating a duplicate player entry.
     const existing = room.players.find((p) => p.userId === userId);
     if (existing) {
       existing.socketId = socket.id;
-      existing.username = username;
+      existing.username = getUsername();
       playerSessions.set(userId, roomId);
       socket.join(roomId);
       io.to(roomId).emit("room:updated", { room });
       return;
     }
 
-    room.players.push({ userId, socketId: socket.id, username });
+    if (room.players.length >= 4) {
+      return socket.emit("error", { message: "Room is full" });
+    }
+
+    if (room.betAmount > 0) {
+      try {
+        await assertUserHasCoins(userId, room.betAmount);
+      } catch (e: unknown) {
+        const message =
+          e instanceof Error ? e.message : "Insufficient coins to join this room.";
+        return socket.emit("error", { message });
+      }
+    }
+
+    try {
+      await addMemberToRoom(roomId, userId);
+    } catch (err) {
+      console.error("[Room] addMemberToRoom failed:", err);
+      return socket.emit("error", { message: "Failed to join room" });
+    }
+
+    room.players.push({ userId, socketId: socket.id, username: getUsername() });
     playerSessions.set(userId, roomId);
     socket.join(roomId);
 
     io.to(roomId).emit("room:updated", { room });
-    console.log(`[Room] User ${username} joined room ${roomId}`);
+    console.log(`[Room] User ${getUsername()} joined room ${roomId}`);
   });
 
   socket.on("room:reconnect", (roomId: string) => {
     console.log(
-      `[Room] Reconnect attempt for room ${roomId} by ${username} (${userId})`,
+      `[Room] Reconnect attempt for room ${roomId} by ${getUsername()} (${userId})`,
     );
     
     const room = activeRooms.get(roomId);
@@ -219,6 +341,14 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
 
     // Restore player socket data
     player.socketId = socket.id;
+    const freshName = getUsername();
+    if (player.username !== freshName) {
+      player.username = freshName;
+      if (room.gameState) {
+        const gp = room.gameState.players.find((p) => p.id === userId);
+        if (gp) gp.name = freshName;
+      }
+    }
     playerSessions.set(userId, roomId);
     socket.join(roomId);
 
@@ -234,23 +364,31 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
       socket.emit("game:ended");
     }
 
-    io.to(roomId).emit("player:reconnected", { userId, username });
+    io.to(roomId).emit("player:reconnected", { userId, username: freshName });
     io.to(roomId).emit("room:updated", { room });
+    if (room.status === "playing" && room.gameState) {
+      io.to(roomId).emit("game:updated", { gameState: room.gameState });
+    }
     emitDisconnectStatus(room);
-    console.log(`[Room] User ${username} reconnected to room ${roomId}`);
+    console.log(`[Room] User ${freshName} reconnected to room ${roomId}`);
   });
 
   socket.on("room:listPublic", () => {
-    const publicRooms = Array.from(activeRooms.values())
+    const publicRooms: PublicRoomListItem[] = Array.from(
+      activeRooms.values(),
+    )
       .filter((room) => room.isPublic && room.status !== "finished")
       .map((room) => ({
         id: room.id,
+        name: room.name,
         hostName:
           room.players.find((p) => p.userId === room.hostId)?.username ||
           "Unknown",
         playerCount: room.players.length,
         status: room.status,
         canJoin: room.status === "waiting" && room.players.length < 4,
+        betAmount: room.betAmount,
+        isPublic: room.isPublic,
       }));
 
     socket.emit("room:publicList", publicRooms);
@@ -272,6 +410,50 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
     }
   });
 
+  /** Sync display name after guest → member upgrade without forcing a full reconnect. */
+  socket.on("auth:refresh", async () => {
+    try {
+      const row = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { username: true },
+      });
+      const dbName = row?.username?.trim();
+      if (!dbName) return;
+
+      socket.data.username = dbName;
+
+      const roomId = playerSessions.get(userId);
+      if (!roomId) return;
+      const room = activeRooms.get(roomId);
+      if (!room) return;
+
+      const roomPlayer = room.players.find((p) => p.userId === userId);
+      if (!roomPlayer) return;
+
+      let changed = false;
+      if (roomPlayer.username !== dbName) {
+        roomPlayer.username = dbName;
+        changed = true;
+      }
+      if (room.gameState) {
+        const gp = room.gameState.players.find((p) => p.id === userId);
+        if (gp && gp.name !== dbName) {
+          gp.name = dbName;
+          changed = true;
+        }
+      }
+
+      if (!changed) return;
+
+      io.to(roomId).emit("room:updated", { room });
+      if (room.gameState && room.status === "playing") {
+        io.to(roomId).emit("game:updated", { gameState: room.gameState });
+      }
+    } catch (err) {
+      console.error("[Room] auth:refresh failed:", err);
+    }
+  });
+
   socket.on("leaveRoom", (data: { roomCode: string }) => {
     const room = activeRooms.get(data.roomCode);
     if (!room) return;
@@ -284,9 +466,10 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
       io.to(data.roomCode).emit("room:updated", { room });
     } else {
       io.to(data.roomCode).emit("room:terminated");
+      void deleteRoom(data.roomCode).catch(() => {});
     }
 
-    console.log(`[Room] User ${username} left room ${data.roomCode}`);
+    console.log(`[Room] User ${getUsername()} left room ${data.roomCode}`);
   });
 
   socket.on("room:start", (roomId: string) => {
@@ -300,6 +483,10 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
         message: "Need at least 2 players to start",
       });
 
+    // Initialize bets + deduct coins (transaction-safe) before starting the game.
+    // Even for free rooms (betAmount=0), we create pending bet records so settlement is unified.
+    initializeRoomBets(roomId, room.players.map((p) => p.userId), room.betAmount)
+      .then(() => {
     const playersInfo = room.players.map((p) => ({
       id: p.userId,
       name: p.username,
@@ -321,6 +508,11 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
 
     io.to(roomId).emit("game:started", { gameState: newGameState });
     console.log(`[Room] Game started in room ${roomId}`);
+      })
+      .catch((e: any) => {
+        console.error(`[Room] Failed to initialize bets for room ${roomId}:`, e?.message ?? e);
+        socket.emit("error", { message: e?.message ?? "Failed to start game" });
+      });
   });
 
   socket.on("game:rematch:request", (roomId: string) => {
@@ -342,26 +534,39 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
 
     // If everyone requested a rematch, start the game anew
     if (room.rematchRequests.length === room.players.length) {
-      const playersInfo = room.players.map((p) => ({
-        id: p.userId,
-        name: p.username,
-      }));
-
-      const newGameState = initializeGame(
+      initializeRoomBets(
         roomId,
-        playersInfo,
-        level1Cards,
-        level2Cards,
-        level3Cards,
-        noblesData,
-      );
+        room.players.map((p) => p.userId),
+        room.betAmount,
+      )
+        .then(() => {
+          const playersInfo = room.players.map((p) => ({
+            id: p.userId,
+            name: p.username,
+          }));
 
-      room.gameState = newGameState;
-      room.status = "playing";
-      room.rematchRequests = [];
+          const newGameState = initializeGame(
+            roomId,
+            playersInfo,
+            level1Cards,
+            level2Cards,
+            level3Cards,
+            noblesData,
+          );
 
-      io.to(roomId).emit("game:started", { gameState: newGameState });
-      console.log(`[Room] Rematch started in room ${roomId}`);
+          room.gameState = newGameState;
+          room.status = "playing";
+          room.rematchRequests = [];
+
+          io.to(roomId).emit("game:started", { gameState: newGameState });
+          console.log(`[Room] Rematch started in room ${roomId}`);
+        })
+        .catch((e: any) => {
+          console.error(`[Room] Failed to init rematch bets:`, e?.message ?? e);
+          socket.emit("error", {
+            message: e?.message ?? "Failed to start rematch",
+          });
+        });
     }
   });
 
@@ -379,7 +584,7 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
   });
 
   socket.on("disconnect", () => {
-    console.log(`[Socket] User ${username} (${userId}) disconnected`);
+    console.log(`[Socket] User ${getUsername()} (${userId}) disconnected`);
 
     const roomId = playerSessions.get(userId);
     if (!roomId) return;
@@ -402,6 +607,7 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
         io.to(roomId).emit("room:updated", { room });
       } else {
         io.to(roomId).emit("room:terminated");
+        void deleteRoom(roomId).catch(() => {});
       }
       return;
     }
@@ -412,7 +618,7 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
     room.disconnectDeadlines[userId] = expiresAt;
     io.to(roomId).emit("player:disconnected", { 
       userId, 
-      username,
+      username: player.username,
       timeoutMs: DISCONNECT_TIMEOUT_MS,
       expiresAt,
       isHost: room.hostId === userId
@@ -420,28 +626,110 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
     emitDisconnectStatus(room);
 
     const timeoutId = setTimeout(() => {
-      console.log(
-        `[Room] Timeout reached for ${username} in room ${roomId}. Removing player.`,
-      );
-
       const currentRoom = activeRooms.get(roomId);
       if (!currentRoom) return;
 
       const currentPlayer = currentRoom.players.find(
         (p) => p.userId === userId,
       );
-      
+
+      console.log(
+        `[Room] Timeout reached for ${currentPlayer?.username ?? userId} in room ${roomId}. Removing player.`,
+      );
+
       // Safety check: Don't remove if they reconnected in the meantime
       if (!currentPlayer || currentPlayer.socketId !== null) return;
 
       delete currentRoom.disconnectDeadlines[userId];
-      const roomDeleted = removePlayerFromRoom(currentRoom, userId, roomId);
 
+      const playersAfterRemoval = currentRoom.players.filter(
+        (p) => p.userId !== userId,
+      );
+      const remainingConnected = playersAfterRemoval.filter(
+        (p) => p.socketId !== null,
+      );
+
+      if (
+        currentRoom.status === "playing" &&
+        remainingConnected.length === 1 &&
+        currentRoom.gameState?.players?.length
+      ) {
+        const winnerUserId = remainingConnected[0].userId;
+        const winnerPlayer = currentRoom.gameState?.players.find(
+          (p) => p.id === winnerUserId,
+        );
+
+        if (winnerPlayer) {
+          // Update in-memory game state for the UI modal.
+          currentRoom.gameState = currentRoom.gameState || null;
+          if (currentRoom.gameState) {
+            currentRoom.gameState.winner = winnerPlayer;
+          }
+        }
+
+        // Persist settlement and winnerStats.
+        void settleRoomBets(roomId, winnerUserId)
+          .then((settleResult: any) => {
+            currentRoom.status = "finished";
+            currentRoom.rematchEnabled = false;
+            currentRoom.rematchRequests = [];
+
+            io.to(roomId).emit("game:updated", {
+              gameState: currentRoom.gameState,
+            });
+            broadcastRematchUpdate(
+              currentRoom,
+              "Opponent abandoned the match",
+            );
+            io.to(roomId).emit("game:over", {
+              reason: "Opponent abandoned the match",
+              winner: winnerPlayer,
+              winnerStats: settleResult?.winnerStats,
+              loserStats: settleResult?.loserStats ?? [],
+              finalState: currentRoom.gameState,
+            });
+            emitDisconnectStatus(currentRoom);
+          })
+          .catch((e: any) => {
+            console.error(
+              `[Room] Failed to settle abandoned match in room ${roomId}:`,
+              e?.message ?? e,
+            );
+            // Fallback: still finish the UI modal.
+            currentRoom.status = "finished";
+            currentRoom.rematchEnabled = false;
+            currentRoom.rematchRequests = [];
+            if (currentRoom.gameState) {
+              currentRoom.gameState.winner = winnerPlayer || null;
+            }
+            io.to(roomId).emit("game:updated", {
+              gameState: currentRoom.gameState,
+            });
+            broadcastRematchUpdate(
+              currentRoom,
+              "Opponent abandoned the match",
+            );
+            io.to(roomId).emit("game:over", {
+              reason: "Opponent abandoned the match",
+              winner: winnerPlayer,
+              winnerStats: null,
+              loserStats: [],
+              finalState: currentRoom.gameState,
+            });
+            emitDisconnectStatus(currentRoom);
+          });
+      }
+
+      // Remove the timed-out player from memory, but don't emit game:ended.
+      const roomDeleted = removePlayerFromRoomSilent(
+        currentRoom,
+        userId,
+        roomId,
+      );
       if (!roomDeleted) {
         io.to(roomId).emit("room:updated", { room: currentRoom });
-        io.to(roomId).emit("player:timeout", { userId, username });
-        emitDisconnectStatus(currentRoom);
       } else {
+        void deleteRoom(roomId).catch(() => {});
         io.to(roomId).emit("room:terminated");
       }
     }, DISCONNECT_TIMEOUT_MS);
