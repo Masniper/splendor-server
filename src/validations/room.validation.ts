@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export const createRoomBodySchema = z.object({
   name: z.string().trim().min(2).max(64).optional(),
+  isPublic: z.boolean().optional().default(true),
+  betAmount: z.number().int().min(0).max(1000000).optional().default(0),
 });
 
 export const settleRoomParamsSchema = z.object({
