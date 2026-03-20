@@ -1,14 +1,20 @@
 import { Server, Socket } from 'socket.io';
+import type { Room } from './room.handler';
 import { activeRooms } from './room.handler';
-import { 
-  takeTokens, 
-  purchaseCard, 
-  reserveCardFromBoard, 
+import {
+  takeTokens,
+  purchaseCard,
+  reserveCardFromBoard,
   reserveCardFromDeck,
-  discardTokens, 
-  chooseNoble 
+  discardTokens,
+  chooseNoble,
 } from '../game/actions';
+import type { GameState } from '../game/models';
 import { GemColor } from '../game/models';
+import {
+  settleRoomBets,
+  type SettleRoomBetsResult,
+} from '../services/bet.service';
 
 export function registerGameHandlers(io: Server, socket: Socket) {
   const userId = socket.data.userId;
@@ -44,19 +50,42 @@ export function registerGameHandlers(io: Server, socket: Socket) {
     return room;
   };
 
-  const applyGameStateUpdate = (room: any, newGameState: any, roomId: string) => {
+  const applyGameStateUpdate = async (
+    room: Room,
+    newGameState: GameState,
+    roomId: string,
+  ): Promise<void> => {
     room.gameState = newGameState;
-    
+
     if (newGameState.winner) {
       room.status = 'finished';
       room.rematchRequests = [];
-      
+
+      let winnerStats: SettleRoomBetsResult['winnerStats'] | null = null;
+      let loserStats: SettleRoomBetsResult['loserStats'] = [];
+      try {
+        const settleResult = await settleRoomBets(
+          roomId,
+          newGameState.winner.id,
+        );
+        winnerStats = settleResult.winnerStats ?? null;
+        loserStats = settleResult.loserStats ?? [];
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`[Game] Failed to settle bets for room ${roomId}:`, msg);
+      }
+
       io.to(roomId).emit('game:over', {
+        reason: 'Match finished',
         winner: newGameState.winner,
-        finalState: newGameState
+        winnerStats,
+        loserStats,
+        finalState: newGameState,
       });
-      
-      console.log(`[Game] Game over in room ${roomId}, winner: ${newGameState.winner.name}`);
+
+      console.log(
+        `[Game] Game over in room ${roomId}, winner: ${newGameState.winner.name}`,
+      );
     }
   };
 
@@ -65,7 +94,7 @@ export function registerGameHandlers(io: Server, socket: Socket) {
     try {
       const room = getValidRoom(roomId);
       const updatedState = takeTokens(room.gameState!, tokens, discardTokens);
-      applyGameStateUpdate(room, updatedState, roomId);
+      void applyGameStateUpdate(room, updatedState, roomId);
       io.to(roomId).emit('game:updated', { gameState: room.gameState });
       console.log(`[Game] User ${username} took tokens in room ${roomId}`);
     } catch (error: any) {
@@ -79,7 +108,7 @@ export function registerGameHandlers(io: Server, socket: Socket) {
     try {
       const room = getValidRoom(roomId);
       const updatedState = purchaseCard(room.gameState!, cardId);
-      applyGameStateUpdate(room, updatedState, roomId);
+      void applyGameStateUpdate(room, updatedState, roomId);
       io.to(roomId).emit('game:updated', { gameState: room.gameState });
       console.log(`[Game] User ${username} purchased card ${cardId} in room ${roomId}`);
     } catch (error: any) {
@@ -95,7 +124,7 @@ export function registerGameHandlers(io: Server, socket: Socket) {
       try {
         const room = getValidRoom(roomId);
         const updatedState = reserveCardFromBoard(room.gameState!, cardId, discardTokens);
-        applyGameStateUpdate(room, updatedState, roomId);
+        void applyGameStateUpdate(room, updatedState, roomId);
         io.to(roomId).emit('game:updated', { gameState: room.gameState });
         console.log(`[Game] User ${username} reserved card ${cardId} in room ${roomId}`);
       } catch (error: any) {
@@ -112,7 +141,7 @@ export function registerGameHandlers(io: Server, socket: Socket) {
       try {
         const room = getValidRoom(roomId);
         const updatedState = reserveCardFromDeck(room.gameState!, level, discardTokens);
-        applyGameStateUpdate(room, updatedState, roomId);
+        void applyGameStateUpdate(room, updatedState, roomId);
         io.to(roomId).emit('game:updated', { gameState: room.gameState });
         console.log(`[Game] User ${username} reserved from deck level ${level} in room ${roomId}`);
       } catch (error: any) {
@@ -127,7 +156,7 @@ export function registerGameHandlers(io: Server, socket: Socket) {
     try {
       const room = getValidRoom(roomId);
       const updatedState = discardTokens(room.gameState!, tokensToDiscard);
-      applyGameStateUpdate(room, updatedState, roomId);
+      void applyGameStateUpdate(room, updatedState, roomId);
       io.to(roomId).emit('game:updated', { gameState: room.gameState });
       console.log(`[Game] User ${username} discarded tokens in room ${roomId}`);
     } catch (error: any) {
@@ -141,7 +170,7 @@ export function registerGameHandlers(io: Server, socket: Socket) {
     try {
       const room = getValidRoom(roomId);
       const updatedState = chooseNoble(room.gameState!, nobleId);
-      applyGameStateUpdate(room, updatedState, roomId);
+      void applyGameStateUpdate(room, updatedState, roomId);
       io.to(roomId).emit('game:updated', { gameState: room.gameState });
       console.log(`[Game] User ${username} chose noble ${nobleId} in room ${roomId}`);
     } catch (error: any) {
