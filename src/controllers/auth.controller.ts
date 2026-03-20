@@ -17,7 +17,7 @@ export const createGuestUser = async (
     res.status(201).json({
       success: true,
       message: "Guest user created successfully",
-      ...result,
+      data: result,
     });
   } catch (error) {
     next(error);
@@ -40,7 +40,7 @@ export const upgradeAccount = async (
       email: req.body.email,
       password: req.body.password,
     });
-    res.status(200).json({ success: true, ...result });
+    res.status(200).json({ success: true, data: result });
   } catch (error) {
     next(error);
   }
@@ -56,7 +56,11 @@ export const login = async (
       email: req.body.email,
       password: req.body.password,
     });
-    res.status(200).json({ success: true, message: "Login successful", ...result });
+    res.status(200).json({
+      success: true,
+      message: "Login successful",
+      data: result,
+    });
   } catch (error) {
     next(error);
   }
@@ -76,7 +80,7 @@ export const registerUser = async (
     res.status(201).json({
       success: true,
       message: "User registered successfully",
-      ...result,
+      data: result,
     });
   } catch (error) {
     next(error);

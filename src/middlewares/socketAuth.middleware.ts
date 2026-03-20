@@ -25,27 +25,31 @@ export const socketAuthMiddleware = async (socket: Socket, next: (err?: Error) =
     // Store userId in socket object for later use
     socket.data.userId = decoded.userId;
 
-    // اگر کلاینت نام نمایشی را در auth فرستاده باشد، همان را استفاده می‌کنیم
+    // Prefer persisted username (e.g. after guest → member upgrade). Client handshake can be stale.
     const handshakeUsername = socket.handshake.auth?.username;
 
-    if (typeof handshakeUsername === 'string' && handshakeUsername.trim().length > 0) {
-      socket.data.username = handshakeUsername.trim();
-    } else {
-      // در غیر این صورت، از پروفایل دیتابیس یا fallback استفاده می‌کنیم
-      try {
-        const user = await prisma.user.findUnique({
-          where: { id: decoded.userId },
-          select: { username: true, is_guest: true },
-        });
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: decoded.userId },
+        select: { username: true },
+      });
 
-        if (user?.username) {
-          socket.data.username = user.username;
-        } else {
-          socket.data.username = `Guest_${decoded.userId.substring(0, 4)}`;
-        }
-      } catch (dbError) {
-        socket.data.username = `Player_${decoded.userId.substring(0, 4)}`;
+      const dbName = user?.username?.trim();
+      if (dbName) {
+        socket.data.username = dbName;
+      } else if (
+        typeof handshakeUsername === 'string' &&
+        handshakeUsername.trim().length > 0
+      ) {
+        socket.data.username = handshakeUsername.trim();
+      } else {
+        socket.data.username = `Guest_${decoded.userId.substring(0, 4)}`;
       }
+    } catch (dbError) {
+      socket.data.username =
+        typeof handshakeUsername === 'string' && handshakeUsername.trim().length > 0
+          ? handshakeUsername.trim()
+          : `Player_${decoded.userId.substring(0, 4)}`;
     }
 
     next();
