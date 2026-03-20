@@ -17,7 +17,7 @@ export const getMe = async (
       return;
     }
     const user = await getCurrentUserProfile(req.userId);
-    res.json({ success: true, user });
+    res.json({ success: true, data: user });
   } catch (error) {
     next(error);
   }
@@ -37,7 +37,7 @@ export const updateProfile = async (
     res.json({
       success: true,
       message: "Profile updated successfully",
-      user,
+      data: user,
     });
   } catch (error) {
     next(error);
@@ -51,7 +51,7 @@ export const getPublicProfile = async (
 ): Promise<void> => {
   try {
     const user = await getPublicUserById(String(req.params.userId));
-    res.json({ success: true, user });
+    res.json({ success: true, data: user });
   } catch (error) {
     next(error);
   }

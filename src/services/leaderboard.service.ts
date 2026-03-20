@@ -8,7 +8,6 @@ function toWinRate(wins: number, losses: number): number {
 
 export async function getTopUsers(limit = 10) {
   const users = await prisma.user.findMany({
-    where: { role: "USER" },
     orderBy: [{ xp: "desc" }, { coins: "desc" }],
     take: limit,
     select: {

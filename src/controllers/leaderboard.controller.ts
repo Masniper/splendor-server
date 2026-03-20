@@ -11,7 +11,7 @@ export const getLeaderboard = async (
     const parsed = leaderboardQuerySchema.parse(req.query);
     const limit = parsed.limit ?? 10;
     const leaderboard = await getTopUsers(limit);
-    res.status(200).json({ success: true, leaderboard });
+    res.status(200).json({ success: true, data: leaderboard });
   } catch (error) {
     next(error);
   }
