@@ -14,7 +14,7 @@ export const placeBet = async (
     }
 
     const bet = await placeBetForUser(req.userId, req.body.roomId, req.body.amount);
-    res.status(201).json({ success: true, bet });
+    res.status(201).json({ success: true, data: bet });
   } catch (error) {
     next(error);
   }
