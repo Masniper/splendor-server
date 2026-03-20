@@ -1,8 +1,8 @@
 {
-  "name": "back-end",
+  "name": "splendor-api",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Splendor multiplayer game API (Express, Socket.IO, Prisma)",
+  "main": "dist/server.js",
   "scripts": {
     "dev": "nodemon src/server.ts",
     "build": "tsc",
