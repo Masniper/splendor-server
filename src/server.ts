@@ -11,6 +11,7 @@ import roomRoutes from './routes/room.routes';
 import betRoutes from './routes/bet.routes';
 import leaderboardRoutes from './routes/leaderboard.routes';
 import { initializeSockets } from './sockets';
+import { prisma } from './services/prisma.service';
 
 dotenv.config();
 
@@ -45,6 +46,30 @@ app.use((error: any, _req: express.Request, res: express.Response, _next: expres
 
 // Initialize Socket.io
 initializeSockets(io);
+
+let isShuttingDown = false;
+
+function gracefulShutdown(signal: string) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`${signal} received, closing HTTP, Socket.IO, and database...`);
+
+  io.close(() => {
+    server.close(async () => {
+      try {
+        await prisma.$disconnect();
+        console.log('Database connection closed.');
+        process.exit(0);
+      } catch (err) {
+        console.error('Error during Prisma $disconnect:', err);
+        process.exit(1);
+      }
+    });
+  });
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 server.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
