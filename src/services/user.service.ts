@@ -1,5 +1,5 @@
 import bcrypt from "bcryptjs";
-import { User, UserRole } from "@prisma/client";
+import { Prisma, User, UserRole } from "@prisma/client";
 import { prisma } from "./prisma.service";
 
 const WELCOME_REWARD_COINS = 500;
@@ -53,7 +53,7 @@ export async function upgradeGuestAccount(payload: UpgradePayload) {
   const salt = await bcrypt.genSalt(10);
   const hashedPassword = await bcrypt.hash(password, salt);
 
-  const upgraded = await prisma.$transaction(async (tx) => {
+  const upgraded = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     return tx.user.update({
       where: { id: userId },
       data: {

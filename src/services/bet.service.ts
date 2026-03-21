@@ -1,4 +1,5 @@
-import { BetStatus, RoomStatus } from "@prisma/client";
+import { BetStatus, Prisma, RoomStatus } from "@prisma/client";
+import type { Bet } from "@prisma/client";
 import { prisma } from "./prisma.service";
 
 const DEFAULT_XP_REWARD = 25;
@@ -10,7 +11,7 @@ export const WIN_BONUS_COINS = 25;
  * after disconnect timeout). Not enforced with user restrictions yet.
  */
 export async function refundPendingBetForUser(roomId: string, userId: string) {
-  return prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const bet = await tx.bet.findFirst({
       where: { roomId, userId, status: BetStatus.PENDING },
     });
@@ -44,7 +45,7 @@ export async function assertUserHasCoins(userId: string, amount: number) {
 }
 
 export async function placeBetForUser(userId: string, roomId: string, amount: number) {
-  return prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const room = await tx.room.findUnique({ where: { id: roomId } });
     if (!room) throw new Error("Room not found.");
 
@@ -77,7 +78,7 @@ export async function initializeRoomBets(
   userIds: string[],
   amount: number,
 ) {
-  return prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const room = await tx.room.findUnique({ where: { id: roomId } });
     if (!room) throw new Error("Room not found.");
 
@@ -90,7 +91,9 @@ export async function initializeRoomBets(
       where: { roomId, status: BetStatus.PENDING },
       select: { userId: true },
     });
-    const existingSet = new Set(existingPending.map((b) => b.userId));
+    const existingSet = new Set(
+      existingPending.map((b: { userId: string }) => b.userId),
+    );
 
     for (const userId of userIds) {
       if (existingSet.has(userId)) continue;
@@ -124,7 +127,7 @@ export async function settleRoomBets(
   winnerUserId: string,
   xpReward = DEFAULT_XP_REWARD,
 ) {
-  return prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const room = await tx.room.findUnique({
       where: { id: roomId },
       include: { members: { select: { id: true } } },
@@ -138,8 +141,11 @@ export async function settleRoomBets(
       throw new Error("No pending bets found for this room.");
     }
 
-    const totalPool = pendingBets.reduce((acc, bet) => acc + bet.amount, 0);
-    const winners = pendingBets.filter((bet) => bet.userId === winnerUserId);
+    const totalPool = pendingBets.reduce(
+      (acc: number, bet: Bet) => acc + bet.amount,
+      0,
+    );
+    const winners = pendingBets.filter((bet: Bet) => bet.userId === winnerUserId);
     if (winners.length === 0) {
       throw new Error("Winner does not have any pending bet in this room.");
     }
@@ -167,7 +173,7 @@ export async function settleRoomBets(
       });
     }
 
-    const losers = pendingBets.filter((bet) => bet.userId !== winnerUserId);
+    const losers = pendingBets.filter((bet: Bet) => bet.userId !== winnerUserId);
     const loserStats: Array<{
       userId: string;
       coinsLost: number;

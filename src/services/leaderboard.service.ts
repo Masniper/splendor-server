@@ -21,7 +21,9 @@ export async function getTopUsers(limit = 10) {
     },
   });
 
-  return users.map((user, index) => ({
+  type UserRow = (typeof users)[number];
+
+  return users.map((user: UserRow, index: number) => ({
     rank: index + 1,
     ...user,
     winRate: toWinRate(user.wins, user.losses),

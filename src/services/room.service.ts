@@ -1,4 +1,5 @@
 import { Prisma, RoomStatus } from "@prisma/client";
+import { PrismaClientKnownRequestError } from "@prisma/client/runtime/library";
 import { prisma } from "./prisma.service";
 
 const MAX_ROOM_ID_ATTEMPTS = 12;
@@ -42,7 +43,7 @@ export async function createRoomForUser(
   for (let attempt = 0; attempt < MAX_ROOM_ID_ATTEMPTS; attempt += 1) {
     const roomId = params.roomId ?? generateShortRoomCode();
     try {
-      return await prisma.$transaction(async (tx) => {
+      return await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         if (betAmount > 0) {
           const user = await tx.user.findUnique({ where: { id: hostId } });
           if (!user) throw new Error("User not found.");
@@ -62,9 +63,9 @@ export async function createRoomForUser(
           include: roomCreateInclude,
         });
       });
-    } catch (e) {
+    } catch (e: unknown) {
       if (
-        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e instanceof PrismaClientKnownRequestError &&
         e.code === "P2002"
       ) {
         if (params.roomId) {
