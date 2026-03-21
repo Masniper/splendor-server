@@ -88,7 +88,6 @@ Create `.env` in `back-end/`:
 | `DATABASE_URL` | **Yes** | Prisma connection string. Default local SQLite: `file:./dev.db` |
 | `JWT_SECRET` | Recommended | Secret for signing/verifying JWTs. Use a long random string in production |
 | `PORT` | No | HTTP/Socket.io port (default: `5001`) |
-| `BINARY_TARGETS` | Depends | Used by `schema.prisma` (`binaryTargets = env("BINARY_TARGETS")`). Set to a Prisma-supported JSON array for your OS (e.g. `["native"]` or `["darwin-arm64"]`) so `prisma generate` succeeds. Omit or set appropriately for Docker/Linux builds. |
 
 **Example `.env`:**
 
@@ -96,7 +95,6 @@ Create `.env` in `back-end/`:
 DATABASE_URL="file:./dev.db"
 JWT_SECRET="change-me-to-a-long-random-secret"
 PORT=5001
-BINARY_TARGETS=["native"]
 ```
 
 > Never commit real secrets. Use strong `JWT_SECRET` values in production.
