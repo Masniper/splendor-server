@@ -22,6 +22,17 @@ import {
   settleRoomBets,
 } from "../services/bet.service";
 import { prisma } from "../services/prisma.service";
+import { roomChatSendSchema } from "../validations/chat.validation";
+
+/** Ephemeral in-memory chat log per active room (lost when room is removed). */
+export type RoomChatEntry = {
+  userId: string;
+  username: string;
+  text: string;
+  sentAt: number;
+};
+
+const MAX_ROOM_CHAT_MESSAGES = 100;
 
 export interface Room {
   id: string;
@@ -39,6 +50,32 @@ export interface Room {
   betAmount: number;
   disconnectTimeouts: Map<string, NodeJS.Timeout>;
   disconnectDeadlines: Record<string, number>;
+  chatMessages: RoomChatEntry[];
+}
+
+function ensureRoomChatLog(room: Room) {
+  if (!Array.isArray(room.chatMessages)) {
+    room.chatMessages = [];
+  }
+}
+
+function pushRoomChatMessage(room: Room, entry: RoomChatEntry) {
+  ensureRoomChatLog(room);
+  room.chatMessages.push(entry);
+  if (room.chatMessages.length > MAX_ROOM_CHAT_MESSAGES) {
+    room.chatMessages.splice(
+      0,
+      room.chatMessages.length - MAX_ROOM_CHAT_MESSAGES,
+    );
+  }
+}
+
+function emitRoomChatHistory(socket: Socket, room: Room) {
+  ensureRoomChatLog(room);
+  socket.emit("room:chat:history", {
+    roomId: room.id,
+    messages: [...room.chatMessages],
+  });
 }
 
 export const activeRooms = new Map<string, Room>();
@@ -247,12 +284,14 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
           betAmount: row.betAmount,
           disconnectTimeouts: new Map(),
           disconnectDeadlines: {},
+          chatMessages: [],
         };
 
         activeRooms.set(roomId, newRoom);
         playerSessions.set(userId, roomId);
         socket.join(roomId);
 
+        emitRoomChatHistory(socket, newRoom);
         socket.emit("room:created", { roomId, room: newRoom });
         console.log(`[Room] User ${getUsername()} created room ${roomId}`);
       } catch (e: unknown) {
@@ -279,6 +318,7 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
       existing.username = getUsername();
       playerSessions.set(userId, roomId);
       socket.join(roomId);
+      emitRoomChatHistory(socket, room);
       io.to(roomId).emit("room:updated", { room });
       return;
     }
@@ -308,6 +348,7 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
     playerSessions.set(userId, roomId);
     socket.join(roomId);
 
+    emitRoomChatHistory(socket, room);
     io.to(roomId).emit("room:updated", { room });
     console.log(`[Room] User ${getUsername()} joined room ${roomId}`);
   });
@@ -351,6 +392,7 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
     }
     playerSessions.set(userId, roomId);
     socket.join(roomId);
+    emitRoomChatHistory(socket, room);
 
     // If no players have a null socketId, everyone is connected
     if (!room.players.some((p) => p.socketId === null)) {
@@ -452,6 +494,36 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
     } catch (err) {
       console.error("[Room] auth:refresh failed:", err);
     }
+  });
+
+  socket.on("room:chat:send", (payload: unknown) => {
+    const parsed = roomChatSendSchema.safeParse(payload);
+    if (!parsed.success) {
+      return socket.emit("error", { message: "Invalid chat message" });
+    }
+
+    const roomId = playerSessions.get(userId);
+    if (!roomId) {
+      return socket.emit("error", { message: "You are not in a room" });
+    }
+
+    const room = activeRooms.get(roomId);
+    if (!room) {
+      return socket.emit("error", { message: "Room not found" });
+    }
+
+    if (!room.players.some((p) => p.userId === userId)) {
+      return socket.emit("error", { message: "You are not in this room" });
+    }
+
+    const entry: RoomChatEntry = {
+      userId,
+      username: getUsername() || "Player",
+      text: parsed.data.text,
+      sentAt: Date.now(),
+    };
+    pushRoomChatMessage(room, entry);
+    io.to(roomId).emit("room:chat:message", entry);
   });
 
   socket.on("leaveRoom", (data: { roomCode: string }) => {
