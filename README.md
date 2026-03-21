@@ -7,7 +7,7 @@
 ![Socket.io](https://img.shields.io/badge/Socket.io-4-010101?logo=socket.io&logoColor=white)
 ![License](https://img.shields.io/badge/license-ISC-lightgrey)
 
-REST API, JWT authentication, and **Socket.io** game/room orchestration for the **Splendor** online multiplayer client. Persists users, rooms, bets, and match outcomes with **Prisma** (SQLite by default).
+REST API, JWT authentication, and **Socket.io** game/room orchestration for the **Splendor** online multiplayer client. Persists users, rooms, bets, and match outcomes with **Prisma** (SQLite by default). **Room chat** messages are **ephemeral** (in-memory per active room, capped buffer — not stored in the database).
 
 ---
 
@@ -18,6 +18,7 @@ REST API, JWT authentication, and **Socket.io** game/room orchestration for the 
 - **Rooms** — Create/join, public listing, host/members persisted in the database
 - **Bets** — Per-room stakes, settlement on match end, winner/loser stats for game-over UI
 - **Leaderboard** — Ranked listing endpoint for the client modal
+- **Room chat** — `room:chat:send` with **Zod** validation; last **100** messages per room in memory; `room:chat:history` on join; `room:chat:message` broadcast to the room
 - **Realtime** — Rooms, lobby sync, full Splendor game actions, rematch, disconnect/reconnect handling
 - **API docs** — OpenAPI/Swagger UI at `/api-docs`
 - **Tests** — Vitest unit tests for critical bet logic
@@ -85,8 +86,9 @@ Create `.env` in `back-end/`:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DATABASE_URL` | **Yes** | Prisma connection string. Default local SQLite: `file:./dev.db` |
-| `JWT_SECRET` | Recommended | Secret for signing/verifying JWTs. A long random string in production |
+| `JWT_SECRET` | Recommended | Secret for signing/verifying JWTs. Use a long random string in production |
 | `PORT` | No | HTTP/Socket.io port (default: `5001`) |
+| `BINARY_TARGETS` | Depends | Used by `schema.prisma` (`binaryTargets = env("BINARY_TARGETS")`). Set to a Prisma-supported JSON array for your OS (e.g. `["native"]` or `["darwin-arm64"]`) so `prisma generate` succeeds. Omit or set appropriately for Docker/Linux builds. |
 
 **Example `.env`:**
 
@@ -94,9 +96,22 @@ Create `.env` in `back-end/`:
 DATABASE_URL="file:./dev.db"
 JWT_SECRET="change-me-to-a-long-random-secret"
 PORT=5001
+BINARY_TARGETS=["native"]
 ```
 
 > Never commit real secrets. Use strong `JWT_SECRET` values in production.
+
+---
+
+## Socket.io — room chat (reference)
+
+| Event | Direction | Payload / notes |
+|-------|------------|-----------------|
+| `room:chat:send` | Client → server | `{ text: string }` — validated (1–500 chars after trim) |
+| `room:chat:message` | Server → room | `{ userId, username, text, sentAt }` |
+| `room:chat:history` | Server → joining socket | `{ roomId, messages: [...] }` — snapshot when entering a room |
+
+Chat logs are **lost** when the server restarts or the room is removed from memory.
 
 ---
 
@@ -112,10 +127,10 @@ back-end/
 │   ├── middlewares/     # JWT auth, socket auth
 │   ├── routes/            # Express routers (/api/...)
 │   ├── services/          # Business logic (auth, rooms, bets, leaderboard)
-│   ├── sockets/           # Socket.io handlers (room, game)
+│   ├── sockets/           # Socket.io handlers (room, game); room chat
 │   ├── types/             # Shared TS types (e.g. room list DTOs)
 │   ├── utils/             # Input parsing helpers
-│   ├── validations/       # Zod schemas
+│   ├── validations/       # Zod schemas (including chat.validation.ts)
 │   └── server.ts          # App entry, HTTP + Socket.io bootstrap
 ├── package.json
 └── tsconfig.json
@@ -149,4 +164,5 @@ This package is licensed under the **ISC** License (see `package.json`).
 
 ## Related
 
-- **Frontend** — Run the [front-end](../front-end) Vite app (default port `3000`) against this server.
+- **Workspace overview** — [../README.md](../README.md)
+- **Frontend** — Run the [../front-end](../front-end) Vite app (default port `3000`) against this server.
