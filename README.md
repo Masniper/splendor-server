@@ -35,7 +35,7 @@ This repository is **[Masniper/splendor-server](https://github.com/Masniper/sple
 | **Runtime** | Node.js |
 | **HTTP** | Express 5 |
 | **Realtime** | Socket.io |
-| **Database** | SQLite (via Prisma); schema supports switching to PostgreSQL |
+| **Database** | PostgreSQL (via Prisma); use Docker Compose from the parent repo or any managed Postgres |
 | **ORM** | Prisma |
 | **Auth** | JWT (`jsonwebtoken`), bcrypt password hashing |
 | **Validation** | Zod |
@@ -51,6 +51,13 @@ This repository is **[Masniper/splendor-server](https://github.com/Masniper/sple
 ---
 
 ## Installation & local setup
+
+### PostgreSQL
+
+Prisma targets **PostgreSQL**. For local development you can:
+
+- Run **`docker compose up -d postgres`** from the parent [**splendor-app**](https://github.com/Masniper/splendor-app) repository (see parent README), then point `DATABASE_URL` at `localhost:5432`, or  
+- Use any other Postgres instance and set `DATABASE_URL` accordingly.
 
 ### Clone (standalone)
 
@@ -71,7 +78,7 @@ npm install
 Create a `.env` file (see [Environment variables](#environment-variables)).
 
 ```bash
-# Generate Prisma client & apply schema to SQLite
+# Apply migrations to your Postgres database
 npx prisma migrate dev
 
 # Development (hot reload)
@@ -99,14 +106,14 @@ Create `.env` in this directory (whether standalone or inside `splendor-app/back
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `DATABASE_URL` | **Yes** | Prisma connection string. Default local SQLite: `file:./dev.db` |
+| `DATABASE_URL` | **Yes** | Prisma **PostgreSQL** connection string, e.g. `postgresql://splendor:splendor@localhost:5432/splendor?schema=public` |
 | `JWT_SECRET` | Recommended | Secret for signing/verifying JWTs. Use a long random string in production |
 | `PORT` | No | HTTP/Socket.io port (default: `5001`) |
 
 **Example `.env`:**
 
 ```env
-DATABASE_URL="file:./dev.db"
+DATABASE_URL="postgresql://splendor:splendor@localhost:5432/splendor?schema=public"
 JWT_SECRET="change-me-to-a-long-random-secret"
 PORT=5001
 ```
@@ -147,6 +154,14 @@ splendor-server/   # or splendor-app/back-end/
 ├── package.json
 └── tsconfig.json
 ```
+
+---
+
+## Docker
+
+This package includes a **multi-stage** `Dockerfile` (Node 20 bookworm-slim): production dependencies, compiled `dist/`, `npx prisma generate`, then `docker-entrypoint.sh` runs **`prisma migrate deploy`** before **`node dist/server.js`**.
+
+It is designed to be built from **Docker Compose** in the parent [**splendor-app**](https://github.com/Masniper/splendor-app) repository (`api` service). Use `.dockerignore` to keep build context small.
 
 ---
 
