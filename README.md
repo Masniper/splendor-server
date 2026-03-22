@@ -1,5 +1,6 @@
 # Splendor — Backend API & Realtime Server
 
+[![Repo](https://img.shields.io/badge/GitHub-splendor--server-181717?logo=github)](https://github.com/Masniper/splendor-server)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D18-339933?logo=nodedotjs&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)
 ![Express](https://img.shields.io/badge/Express-5-000000?logo=express&logoColor=white)
@@ -8,6 +9,8 @@
 ![License](https://img.shields.io/badge/license-ISC-lightgrey)
 
 REST API, JWT authentication, and **Socket.io** game/room orchestration for the **Splendor** online multiplayer client. Persists users, rooms, bets, and match outcomes with **Prisma** (SQLite by default). **Room chat** messages are **ephemeral** (in-memory per active room, capped buffer — not stored in the database).
+
+This repository is **[Masniper/splendor-server](https://github.com/Masniper/splendor-server)**. It is also vendored as the **`back-end/`** submodule inside the parent app **[Masniper/splendor-app](https://github.com/Masniper/splendor-app)**.
 
 ---
 
@@ -25,7 +28,7 @@ REST API, JWT authentication, and **Socket.io** game/room orchestration for the 
 
 ---
 
-## Tech Stack
+## Tech stack
 
 | Layer | Technologies |
 |--------|----------------|
@@ -47,10 +50,21 @@ REST API, JWT authentication, and **Socket.io** game/room orchestration for the 
 
 ---
 
-## Installation & Local Setup
+## Installation & local setup
+
+### Clone (standalone)
 
 ```bash
-cd back-end
+git clone https://github.com/Masniper/splendor-server.git
+cd splendor-server
+npm install
+```
+
+### Clone as part of the full stack
+
+```bash
+git clone --recurse-submodules https://github.com/Masniper/splendor-app.git
+cd splendor-app/back-end
 npm install
 ```
 
@@ -81,7 +95,7 @@ npm test
 
 ## Environment variables
 
-Create `.env` in `back-end/`:
+Create `.env` in this directory (whether standalone or inside `splendor-app/back-end/`):
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -116,13 +130,13 @@ Chat logs are **lost** when the server restarts or the room is removed from memo
 ## Project structure
 
 ```
-back-end/
+splendor-server/   # or splendor-app/back-end/
 ├── prisma/
 │   └── schema.prisma      # User, Room, Bet models & enums
 ├── src/
 │   ├── config/            # Swagger/OpenAPI spec
 │   ├── controllers/       # HTTP handlers
-│   ├── middlewares/     # JWT auth, socket auth
+│   ├── middlewares/       # JWT auth, socket auth
 │   ├── routes/            # Express routers (/api/...)
 │   ├── services/          # Business logic (auth, rooms, bets, leaderboard)
 │   ├── sockets/           # Socket.io handlers (room, game); room chat
@@ -162,5 +176,5 @@ This package is licensed under the **ISC** License (see `package.json`).
 
 ## Related
 
-- **Workspace overview** — [../README.md](../README.md)
-- **Frontend** — Run the [../front-end](../front-end) Vite app (default port `3000`) against this server.
+- **Full stack (parent + submodules)** — [Masniper/splendor-app](https://github.com/Masniper/splendor-app)
+- **Frontend client** — [Masniper/splendor-client](https://github.com/Masniper/splendor-client)
