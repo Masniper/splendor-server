@@ -8,7 +8,7 @@
 ![Socket.io](https://img.shields.io/badge/Socket.io-4-010101?logo=socket.io&logoColor=white)
 ![License](https://img.shields.io/badge/license-ISC-lightgrey)
 
-REST API, JWT authentication, and **Socket.io** game/room orchestration for the **Splendor** online multiplayer client. Persists users, rooms, bets, and match outcomes with **Prisma** (SQLite by default). **Room chat** messages are **ephemeral** (in-memory per active room, capped buffer — not stored in the database).
+REST API, JWT authentication, and **Socket.io** game/room orchestration for the **Splendor** online multiplayer client. Persists users, rooms, bets, and match outcomes with **Prisma** (PostgreSQL via `DATABASE_URL`). **Room chat** messages are **ephemeral** (in-memory per active room, capped buffer — not stored in the database).
 
 This repository is **[Masniper/splendor-server](https://github.com/Masniper/splendor-server)**. It is also vendored as the **`back-end/`** submodule inside the parent app **[Masniper/splendor-app](https://github.com/Masniper/splendor-app)**.
 
@@ -107,6 +107,7 @@ Create `.env` in this directory (whether standalone or inside `splendor-app/back
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DATABASE_URL` | **Yes** | Prisma **PostgreSQL** connection string, e.g. `postgresql://splendor:splendor@localhost:5432/splendor?schema=public` |
+| `PROVIDER` | **Yes** | Prisma datasource provider used by `prisma/schema.prisma` (e.g. `postgresql`) |
 | `JWT_SECRET` | Recommended | Secret for signing/verifying JWTs. Use a long random string in production |
 | `PORT` | No | HTTP/Socket.io port (default: `5001`) |
 
@@ -114,6 +115,7 @@ Create `.env` in this directory (whether standalone or inside `splendor-app/back
 
 ```env
 DATABASE_URL="postgresql://splendor:splendor@localhost:5432/splendor?schema=public"
+PROVIDER="postgresql"
 JWT_SECRET="change-me-to-a-long-random-secret"
 PORT=5001
 ```
