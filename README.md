@@ -107,7 +107,6 @@ Create `.env` in this directory (whether standalone or inside `splendor-app/back
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DATABASE_URL` | **Yes** | Prisma **PostgreSQL** connection string, e.g. `postgresql://splendor:splendor@localhost:5432/splendor?schema=public` |
-| `PROVIDER` | **Yes** | Prisma datasource provider used by `prisma/schema.prisma` (e.g. `postgresql`) |
 | `JWT_SECRET` | Recommended | Secret for signing/verifying JWTs. Use a long random string in production |
 | `PORT` | No | HTTP/Socket.io port (default: `5001`) |
 
@@ -115,7 +114,6 @@ Create `.env` in this directory (whether standalone or inside `splendor-app/back
 
 ```env
 DATABASE_URL="postgresql://splendor:splendor@localhost:5432/splendor?schema=public"
-PROVIDER="postgresql"
 JWT_SECRET="change-me-to-a-long-random-secret"
 PORT=5001
 ```
