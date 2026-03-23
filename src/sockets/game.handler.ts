@@ -1,6 +1,25 @@
 import { Server, Socket } from 'socket.io';
 import type { Room } from './room.handler';
 import { activeRooms } from './room.handler';
+
+/** Match front-end `utils/tokenFlight.ts` (duration + stagger + buffer). */
+function tokenFlightTotalMs(len: number): number {
+  if (len <= 0) return 0;
+  return Math.round(520 + Math.max(0, len - 1) * 75 + 90);
+}
+
+function delayAfterTokenFlights(takeLen: number, discardLen: number): number {
+  return tokenFlightTotalMs(takeLen) + tokenFlightTotalMs(discardLen) + 120;
+}
+
+/** Align with splendor-net `MOVECARD_DURATION` (~1000ms) and front-end `CARD_FLIGHT_DURATION_MS`. */
+const CARD_MOVE_MS = 1000;
+
+function delayAfterCardAndOptionalGoldMs(gaveGold: boolean): number {
+  const goldMs = gaveGold ? tokenFlightTotalMs(1) : 0;
+  return Math.max(CARD_MOVE_MS, goldMs) + 120;
+}
+
 import {
   takeTokens,
   purchaseCard,
@@ -11,6 +30,11 @@ import {
 } from '../game/actions';
 import type { GameState } from '../game/models';
 import { GemColor } from '../game/models';
+import {
+  findCardForPurchase,
+  findCardOnBoard,
+  toCardMovePayload,
+} from '../game/cardMovePayload';
 import {
   settleRoomBets,
   type SettleRoomBetsResult,
@@ -93,9 +117,24 @@ export function registerGameHandlers(io: Server, socket: Socket) {
   socket.on('game:takeTokens', (roomId: string, tokens: GemColor[], discardTokens: GemColor[] = []) => {
     try {
       const room = getValidRoom(roomId);
-      const updatedState = takeTokens(room.gameState!, tokens, discardTokens);
+      const actingPlayerId =
+        room.gameState!.players[room.gameState!.currentPlayerIndex].id;
+      const taken = tokens ?? [];
+      const disc = discardTokens ?? [];
+      const updatedState = takeTokens(room.gameState!, taken, disc);
       void applyGameStateUpdate(room, updatedState, roomId);
-      io.to(roomId).emit('game:updated', { gameState: room.gameState });
+      io.to(roomId).emit('game:tokensTaken', {
+        playerId: actingPlayerId,
+        tokens: [...taken],
+        discardTokens: [...disc],
+      });
+      const delay = delayAfterTokenFlights(taken.length, disc.length);
+      setTimeout(() => {
+        const r = activeRooms.get(roomId);
+        if (r?.gameState && r.status === 'playing') {
+          io.to(roomId).emit('game:updated', { gameState: r.gameState });
+        }
+      }, Math.max(delay, 80));
       console.log(`[Game] User ${username} took tokens in room ${roomId}`);
     } catch (error: any) {
       console.error(`[Game] Error in takeTokens for user ${username}:`, error.message);
@@ -107,9 +146,33 @@ export function registerGameHandlers(io: Server, socket: Socket) {
   socket.on('game:purchaseCard', (roomId: string, cardId: string) => {
     try {
       const room = getValidRoom(roomId);
-      const updatedState = purchaseCard(room.gameState!, cardId);
+      const gs = room.gameState!;
+      const idx = gs.currentPlayerIndex;
+      const actingPlayerId = gs.players[idx].id;
+      const snap = findCardForPurchase(gs, cardId, idx);
+      if (!snap) {
+        socket.emit('game:error', { message: 'Card not found.' });
+        return;
+      }
+      const updatedState = purchaseCard(gs, cardId);
       void applyGameStateUpdate(room, updatedState, roomId);
-      io.to(roomId).emit('game:updated', { gameState: room.gameState });
+      io.to(roomId).emit(
+        'game:cardMoved',
+        toCardMovePayload(
+          snap.card,
+          actingPlayerId,
+          'purchase',
+          snap.source === 'board' ? 'board' : 'reserved',
+          snap.level,
+          false,
+        ),
+      );
+      setTimeout(() => {
+        const r = activeRooms.get(roomId);
+        if (r?.gameState && r.status === 'playing') {
+          io.to(roomId).emit('game:updated', { gameState: r.gameState });
+        }
+      }, CARD_MOVE_MS + 120);
       console.log(`[Game] User ${username} purchased card ${cardId} in room ${roomId}`);
     } catch (error: any) {
       console.error(`[Game] Error in purchaseCard for user ${username}:`, error.message);
@@ -120,12 +183,55 @@ export function registerGameHandlers(io: Server, socket: Socket) {
   // 3. Reserve Card
   socket.on(
     'game:reserveCard',
-    (roomId: string, cardId: string, discardTokens: GemColor[] = []) => {
+    (roomId: string, cardId: string, discardTokensArg: GemColor[] = []) => {
       try {
         const room = getValidRoom(roomId);
-        const updatedState = reserveCardFromBoard(room.gameState!, cardId, discardTokens);
+        const gs = room.gameState!;
+        const actingPlayerId = gs.players[gs.currentPlayerIndex].id;
+        const disc = discardTokensArg ?? [];
+        const preGold = gs.bank[GemColor.Gold] > 0;
+        const snap = findCardOnBoard(gs, cardId);
+        if (!snap) {
+          socket.emit('game:error', { message: 'Card not found on board.' });
+          return;
+        }
+        const updatedState = reserveCardFromBoard(gs, cardId, disc);
         void applyGameStateUpdate(room, updatedState, roomId);
-        io.to(roomId).emit('game:updated', { gameState: room.gameState });
+        const payload = toCardMovePayload(
+          snap.card,
+          actingPlayerId,
+          'reserve',
+          'board',
+          snap.level,
+          preGold,
+        );
+
+        const emitCardAndGold = () => {
+          io.to(roomId).emit('game:cardMoved', payload);
+          if (preGold) {
+            io.to(roomId).emit('game:tokensTaken', {
+              playerId: actingPlayerId,
+              tokens: [GemColor.Gold],
+              discardTokens: [],
+            });
+          }
+          setTimeout(() => {
+            const r = activeRooms.get(roomId);
+            if (r?.gameState && r.status === 'playing') {
+              io.to(roomId).emit('game:updated', { gameState: r.gameState });
+            }
+          }, delayAfterCardAndOptionalGoldMs(preGold));
+        };
+
+        if (disc.length > 0) {
+          io.to(roomId).emit('game:tokensDiscarded', {
+            playerId: actingPlayerId,
+            tokens: [...disc],
+          });
+          setTimeout(emitCardAndGold, tokenFlightTotalMs(disc.length));
+        } else {
+          emitCardAndGold();
+        }
         console.log(`[Game] User ${username} reserved card ${cardId} in room ${roomId}`);
       } catch (error: any) {
         console.error(`[Game] Error in reserveCard for user ${username}:`, error.message);
@@ -137,12 +243,53 @@ export function registerGameHandlers(io: Server, socket: Socket) {
   // 3.5 Reserve Card From Deck (face-down)
   socket.on(
     'game:reserveFromDeck',
-    (roomId: string, level: 1 | 2 | 3, discardTokens: GemColor[] = []) => {
+    (roomId: string, level: 1 | 2 | 3, discardTokensArg: GemColor[] = []) => {
       try {
         const room = getValidRoom(roomId);
-        const updatedState = reserveCardFromDeck(room.gameState!, level, discardTokens);
+        const gs = room.gameState!;
+        const actingPlayerId = gs.players[gs.currentPlayerIndex].id;
+        const disc = discardTokensArg ?? [];
+        const preGold = gs.bank[GemColor.Gold] > 0;
+        const actingIdx = gs.currentPlayerIndex;
+        const updatedState = reserveCardFromDeck(gs, level, disc);
         void applyGameStateUpdate(room, updatedState, roomId);
-        io.to(roomId).emit('game:updated', { gameState: room.gameState });
+        const reserved = updatedState.players[actingIdx].reservedCards;
+        const card = reserved[reserved.length - 1];
+        const payload = toCardMovePayload(
+          card,
+          actingPlayerId,
+          'reserve_from_deck',
+          'deck',
+          level,
+          preGold,
+        );
+
+        const emitCardAndGold = () => {
+          io.to(roomId).emit('game:cardMoved', payload);
+          if (preGold) {
+            io.to(roomId).emit('game:tokensTaken', {
+              playerId: actingPlayerId,
+              tokens: [GemColor.Gold],
+              discardTokens: [],
+            });
+          }
+          setTimeout(() => {
+            const r = activeRooms.get(roomId);
+            if (r?.gameState && r.status === 'playing') {
+              io.to(roomId).emit('game:updated', { gameState: r.gameState });
+            }
+          }, delayAfterCardAndOptionalGoldMs(preGold));
+        };
+
+        if (disc.length > 0) {
+          io.to(roomId).emit('game:tokensDiscarded', {
+            playerId: actingPlayerId,
+            tokens: [...disc],
+          });
+          setTimeout(emitCardAndGold, tokenFlightTotalMs(disc.length));
+        } else {
+          emitCardAndGold();
+        }
         console.log(`[Game] User ${username} reserved from deck level ${level} in room ${roomId}`);
       } catch (error: any) {
         console.error(`[Game] Error in reserveFromDeck for user ${username}:`, error.message);
@@ -155,9 +302,21 @@ export function registerGameHandlers(io: Server, socket: Socket) {
   socket.on('game:discardTokens', (roomId: string, tokensToDiscard: GemColor[]) => {
     try {
       const room = getValidRoom(roomId);
+      const actingPlayerId =
+        room.gameState!.players[room.gameState!.currentPlayerIndex].id;
       const updatedState = discardTokens(room.gameState!, tokensToDiscard);
       void applyGameStateUpdate(room, updatedState, roomId);
-      io.to(roomId).emit('game:updated', { gameState: room.gameState });
+      io.to(roomId).emit('game:tokensDiscarded', {
+        playerId: actingPlayerId,
+        tokens: [...tokensToDiscard],
+      });
+      const delay = delayAfterTokenFlights(0, tokensToDiscard.length);
+      setTimeout(() => {
+        const r = activeRooms.get(roomId);
+        if (r?.gameState && r.status === 'playing') {
+          io.to(roomId).emit('game:updated', { gameState: r.gameState });
+        }
+      }, Math.max(delay, 80));
       console.log(`[Game] User ${username} discarded tokens in room ${roomId}`);
     } catch (error: any) {
       console.error(`[Game] Error in discardTokens for user ${username}:`, error.message);

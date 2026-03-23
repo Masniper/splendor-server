@@ -322,7 +322,8 @@ export const purchaseCard = (state: GameState, cardId: string): GameState => {
     if (idx !== -1) {
       board.splice(idx, 1);
       if (deck.length > 0) {
-        board.push(deck.shift()!);
+        // Insert at the same position so the refill lands on the exact emptied slot
+        board.splice(idx, 0, deck.shift()!);
       }
     }
   } else if (source === "reserved") {
@@ -351,6 +352,7 @@ export const reserveCardFromBoard = (
 
   let cardToReserve: DevelopmentCard | undefined;
   let level: 1 | 2 | 3 | null = null;
+  let reservedIdx = 0;
 
   for (const l of [1, 2, 3] as const) {
     const idx = newState.boardCards[`level${l}`].findIndex(
@@ -359,6 +361,7 @@ export const reserveCardFromBoard = (
     if (idx !== -1) {
       cardToReserve = newState.boardCards[`level${l}`][idx];
       level = l;
+      reservedIdx = idx;
       newState.boardCards[`level${l}`].splice(idx, 1);
       break;
     }
@@ -378,7 +381,8 @@ export const reserveCardFromBoard = (
   if (level) {
     const deck = newState.decks[`level${level}`];
     if (deck.length > 0) {
-      newState.boardCards[`level${level}`].push(deck.shift()!);
+      // Insert at the same position so the refill lands on the exact emptied slot
+      newState.boardCards[`level${level}`].splice(reservedIdx, 0, deck.shift()!);
     }
   }
 
