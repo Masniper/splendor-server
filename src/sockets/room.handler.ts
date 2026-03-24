@@ -81,7 +81,7 @@ function emitRoomChatHistory(socket: Socket, room: Room) {
 export const activeRooms = new Map<string, Room>();
 export const playerSessions = new Map<string, string>();
 
-const DISCONNECT_TIMEOUT_MS = 120000; // 2 minutes
+const DISCONNECT_TIMEOUT_MS = 300000; // 5 minutes
 
 function cleanupPlayerSession(userId: string, roomId: string) {
   playerSessions.delete(userId);
@@ -399,11 +399,17 @@ export function registerRoomHandlers(io: Server, socket: Socket) {
       room.waitingForReconnection = false;
     }
 
+    // Finished rooms: send game:ended and clean up — no room:updated to avoid race condition
+    if (room.status === "finished") {
+      cleanupPlayerSession(userId, roomId);
+      socket.emit("game:ended");
+      console.log(`[Room] User ${freshName} reconnected to finished room ${roomId}, sending game:ended`);
+      return;
+    }
+
     // Restore game state to the reconnected client
     if (room.status === "playing" && room.gameState) {
       socket.emit("game:updated", { gameState: room.gameState });
-    } else if (room.status === "finished") {
-      socket.emit("game:ended");
     }
 
     io.to(roomId).emit("player:reconnected", { userId, username: freshName });
